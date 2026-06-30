@@ -6,17 +6,7 @@
 
 ---
 
-## 1. Amaç ve Temel Kural
-
-Onlarca GB'a ulaşabilen NDJSON log dosyalarını akıcı görüntülemek.
-
-**Performans barı (mentör):** İlk yüklemede 20-30 sn beklemek kabul edilebilir; sonrasında sıfır lag/donma. → **Karşılandı.** Veri DuckDB'de diskte durur, tarayıcı her seferinde yalnızca bir sayfa (100 satır) tutar.
-
-**Neden bu mimari:** Veriyi tarayıcı belleğinde tutmak imkânsız (4.5 GB gerçek veride sekme çöküyordu). Docker çalışmadığı için ClickHouse yerine embedded DuckDB — sadece bir npm paketi, container/sunucu yok, diske yazar ve bellekten büyük veriyi diske spill eder.
-
----
-
-## 2. Stack
+## 1. Stack
 
 | Katman         | Teknoloji                                 | Rol                                                |
 | -------------- | ----------------------------------------- | -------------------------------------------------- |
@@ -28,7 +18,7 @@ Onlarca GB'a ulaşabilen NDJSON log dosyalarını akıcı görüntülemek.
 
 ---
 
-## 3. Klasör Yapısı
+## 2. Klasör Yapısı
 
 ```
 log-viewer/
@@ -50,15 +40,13 @@ log-viewer/
 
 ---
 
-## 4. Kurulum (sıfırdan)
+## 3. Kurulum (sıfırdan)
 
 ### Gereksinim
 
 ```bash
 node -v    # 20+
 ```
-
-> **Staj makinesi riski:** `@duckdb/node-api` native binary indirir. Docker'ı engelleyen güvenlik politikası bunu da engelleyebilir — staja gidince ilk iş `npm install`'un çalıştığını teyit et.
 
 ### Backend
 
