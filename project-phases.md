@@ -1,31 +1,30 @@
 # Log Viewer — Geliştirici Rehberi
 
-> Bu dosya her phase tamamlandıkça güncellenir.
-> Mimari: **React + Node/Express + embedded DuckDB** (Docker yok, ayrı sunucu yok)
-> Son güncelleme: **Phase 0'a hazır** (fresh kurulum)
+> Staj projesi: localhost'ta çalışan log görüntüleyici.
+> Mimari: **React + Node/Express + embedded DuckDB** (Docker yok, ayrı sunucu yok).
+> Durum: **Çalışan temel hazır** — 30M satır / 4.5 GB test edildi, 20-30 sn'de yüklenip akıcı görüntüleniyor.
 
 ---
 
 ## 1. Amaç ve Temel Kural
 
-**Amaç:** Onlarca GB'a ulaşabilen NDJSON log dosyalarını akıcı biçimde görüntülemek.
+Onlarca GB'a ulaşabilen NDJSON log dosyalarını akıcı görüntülemek.
 
-**Temel kural:** İlk yüklemede 20-30 saniye beklemek kabul edilebilir. Sonrasında sıfır lag, sıfır donma.
+**Performans barı (mentör):** İlk yüklemede 20-30 sn beklemek kabul edilebilir; sonrasında sıfır lag/donma. → **Karşılandı.** Veri DuckDB'de diskte durur, tarayıcı her seferinde yalnızca bir sayfa (100 satır) tutar.
 
-**Neden bu mimari:** Veriyi tarayıcı belleğinde tutmak imkânsız (4.5 GB gerçek veride sekme çöktü). DuckDB veriyi **diske** yazar ve bellekten büyük veri setlerini diske spill ederek işler. Tarayıcı her seferinde yalnızca bir sayfa (100 satır) tutar, dolayısıyla çökme olmaz. Docker çalışmadığı için ClickHouse yerine embedded DuckDB kullanıyoruz — sadece bir npm paketi, ayrı sunucu/container yok.
+**Neden bu mimari:** Veriyi tarayıcı belleğinde tutmak imkânsız (4.5 GB gerçek veride sekme çöküyordu). Docker çalışmadığı için ClickHouse yerine embedded DuckDB — sadece bir npm paketi, container/sunucu yok, diske yazar ve bellekten büyük veriyi diske spill eder.
 
 ---
 
 ## 2. Stack
 
-| Katman         | Teknoloji                          | Neden                                                   |
-| -------------- | ---------------------------------- | ------------------------------------------------------- |
-| Frontend       | React + Vite + TypeScript          | Hızlı geliştirme, tip güvenliği                         |
-| Virtual Scroll | react-window                       | Milyonlarca satırda sadece görünen ~30 satır DOM'da     |
-| Backend        | Node.js + Express + TypeScript     | DuckDB'yi besler, sorguları çalıştırır                  |
-| Veritabanı     | embedded DuckDB (@duckdb/node-api) | Columnar, diske yazar, GB ölçeğini kaldırır, Docker yok |
-
-**Kullanılmayan (eski plandan):** Docker, ClickHouse, Uppy, TanStack Query/Virtual. İhtiyaç olursa sonra eklenir.
+| Katman         | Teknoloji                                 | Rol                                                |
+| -------------- | ----------------------------------------- | -------------------------------------------------- |
+| Frontend       | React + Vite + TypeScript                 | Arayüz                                             |
+| Upload         | Uppy (core, react, dashboard, xhr-upload) | Klasör sürükle-bırak, dosyaları backend'e yükler   |
+| Backend        | Node.js + Express + TypeScript            | Upload alır, DuckDB'ye yazar, sorguları çalıştırır |
+| Veritabanı     | embedded DuckDB (@duckdb/node-api)        | Columnar, diske yazar, GB ölçeğini kaldırır        |
+| Virtual Scroll | react-window                              | (Kurulu, henüz kullanılmıyor — sıradaki adım)      |
 
 ---
 
@@ -33,461 +32,200 @@
 
 ```
 log-viewer/
-├── LOG_VIEWER_DEV.md          ← bu dosya
-├── generate-mock-logs.mjs     ← test verisi üretici
+├── generate-mock-logs.mjs        ← test verisi üretici
 ├── backend/
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── logs.db                ← DuckDB'nin diske yazdığı veritabanı (otomatik oluşur)
+│   ├── package.json              ← "type": "module", script: tsx watch src/index.ts
+│   ├── logs.db                   ← DuckDB veritabanı (ilk çalıştırmada otomatik oluşur)
+│   ├── uploads/                  ← multer geçici dosya klasörü (otomatik, işlem sonrası temizlenir)
 │   └── src/
 │       └── index.ts
 └── frontend/
     ├── package.json
     └── src/
-        └── App.tsx
+        ├── App.tsx               ← state, pagination, reset
+        └── Components/
+            ├── FileUploader.tsx  ← Uppy Dashboard + XHRUpload
+            └── LogTable.tsx      ← düz tablo (react-window'a çevrilecek)
 ```
 
 ---
 
-## 4. Mimari Akış
+## 4. Kurulum (sıfırdan)
 
-### Ingestion (klasör → DuckDB) — bir kerelik, 20-30 sn bütçesi burada
-
-```
-Kullanıcı klasör YOLUNU verir (POST /ingest, body: { folderPath })
-        ↓
-Node tek SQL çalıştırır:
-  read_json_auto('<folder>/**/*.ndjson', filename = true)
-        ↓
-DuckDB tüm klasörü kendisi diskten tarar (Node RAM'i dolmaz)
-        ↓
-filename kolonundan metadata türetilir: console no, is_service_log
-        ↓
-logs.db dosyasına yazılır (diskte, sıkıştırılmış)
-```
-
-Tarayıcıya hiçbir dosya yüklenmez. 4.5 GB diskte kalır, sadece DuckDB okur.
-
-### Query (her filtre/scroll'da) — lag olmaması gereken kısım
-
-```
-React UI — tab seç / filtre uygula / aşağı kaydır
-        ↓
-GET /logs?console=1&level=error&page=2&limit=100
-        ↓
-Node → SQL: WHERE + ORDER BY + LIMIT/OFFSET → runAndReadAll
-        ↓
-DuckDB → sadece 100 satır döner
-        ↓
-react-window → DOM'da sadece görünen ~30 satır
-        ↓ (kullanıcı aşağı kaydırır)
-Sonraki sayfa istenir
-```
-
----
-
-## 5. DuckDB Tablo Şeması
-
-Ayrı bir `CREATE TABLE` yazmaya gerek yok; tablo ingestion sırasında `read_json_auto`'dan türetiliyor. Oluşan kolonlar:
-
-| Kolon            | Tip     | Kaynak                                                         |
-| ---------------- | ------- | -------------------------------------------------------------- |
-| `timestamp`      | VARCHAR | log'daki ham değer (sıralama gerekince timestamp'e çevrilecek) |
-| `level`          | VARCHAR | info / warning / error                                         |
-| `service`        | VARCHAR | microservis adı                                                |
-| `event_type`     | VARCHAR | event / query / command / commandResult                        |
-| `message`        | VARCHAR | serbest metin                                                  |
-| `source_path`    | VARCHAR | `filename` — dosyanın tam yolu                                 |
-| `console`        | INTEGER | dosya yolundan regex ile (`console_1` → 1)                     |
-| `is_service_log` | INTEGER | yol `serviceLogs` içeriyorsa 1, değilse 0                      |
-
-> **Timestamp notu:** Format `DD.MM.YYYY HH:MM.mmmmm` standart değil. Şimdilik VARCHAR olarak saklanıyor. Sıralama (merged serviceLogs görünümü) gerektiğinde `strptime` ile gerçek `TIMESTAMP`'e çevrilecek (Phase 4). String olarak sıralanırsa gün-önce formatı yanlış sıralanır.
-
----
-
-## 6. Roadmap
-
-| Phase | İçerik                                                                       | Durum       |
-| ----- | ---------------------------------------------------------------------------- | ----------- |
-| **0** | Fresh kurulum — proje, backend (DuckDB testi), frontend, mock üretici        | 🔲 Sıradaki |
-| **1** | Thin slice — /ingest (klasör yolu) + /logs + düz tablo                       | 🔲          |
-| **2** | Gerçek ölçek — 4.5 GB testi, metadata kolonları, sorgu hızı                  | 🔲          |
-| **3** | Pagination + react-window — lag yok kanıtı                                   | 🔲          |
-| **4** | Navigation — console tab'ları, serviceLogs/other tree, merged sıralı görünüm | 🔲          |
-| **5** | Filtreler (level/time/service/eventType) + reset butonu                      | 🔲          |
-| **6** | Polish — error handling, progress, deferred (search/sort), CSS               | 🔲          |
-
----
-
-## Phase 0 — Fresh Kurulum 🔲
-
-> **Amaç:** Boş klasörden başlayıp backend'in DuckDB'ye bağlandığını ve frontend'in açıldığını kanıtlamak.
-
-### 0.0 Gereksinim kontrolü
+### Gereksinim
 
 ```bash
-node -v    # 20+ olmalı
-npm -v
+node -v    # 20+
 ```
 
-> **Staj makinesi riski:** `@duckdb/node-api` native bir binary indirir. Docker'ı engelleyen güvenlik politikası bunu da engelleyebilir. Staja gidince **ilk iş** `npm install @duckdb/node-api`'nin çalıştığını teyit et. Kendi bilgisayarında sorun olmaz.
+> **Staj makinesi riski:** `@duckdb/node-api` native binary indirir. Docker'ı engelleyen güvenlik politikası bunu da engelleyebilir — staja gidince ilk iş `npm install`'un çalıştığını teyit et.
 
-### 0.1 Proje klasörü
-
-```bash
-mkdir log-viewer && cd log-viewer
-git init
-```
-
-`generate-mock-logs.mjs` dosyasını proje köküne koy (ayrı dosya olarak verildi).
-
-### 0.2 Backend kurulumu
+### Backend
 
 ```bash
-mkdir backend && cd backend
-npm init -y
-npm install express cors @duckdb/node-api
-npm install -D typescript tsx @types/node @types/express @types/cors
+cd backend
+npm install express cors multer @duckdb/node-api
+npm install -D typescript tsx @types/node @types/express @types/cors @types/multer
 npx tsc --init
 ```
 
-`backend/package.json` içine ekle/düzenle:
+`backend/package.json` içine:
 
 ```json
 "type": "module",
 "scripts": { "dev": "tsx watch src/index.ts" }
 ```
 
-`backend/src/index.ts` — DuckDB bağlantı testi:
-
-```ts
-import { DuckDBInstance } from '@duckdb/node-api';
-
-const instance = await DuckDBInstance.create('logs.db'); // diske yazan kalıcı DB
-const connection = await instance.connect();
-
-const reader = await connection.runAndReadAll(
-  "SELECT 'DuckDB bağlı ✅' AS status",
-);
-console.log(reader.getRowObjects());
-```
-
-Çalıştır:
+### Frontend
 
 ```bash
-npm run dev
-# Beklenen: [ { status: 'DuckDB bağlı ✅' } ]
-```
-
-> `getRowObjects()` hata verirse method adı sürümle farklı olabilir — `getRows()` dene.
-
-### 0.3 Frontend kurulumu
-
-Yeni terminal, `log-viewer` kökünden:
-
-```bash
-npm create vite@latest frontend -- --template react-ts
 cd frontend
-npm install
-npm install react-window
+npm install @uppy/core @uppy/react @uppy/dashboard @uppy/xhr-upload react-window
 npm install -D @types/react-window
-npm run dev
-# http://localhost:5173 açılmalı
 ```
 
-### 0.4 Mock veri üret
-
-`log-viewer` kökünden:
+### Mock veri üret
 
 ```bash
-node generate-mock-logs.mjs 2000     # her dosyaya 2000 satır → toplam ~60k satır
+node generate-mock-logs.mjs 2000     # her dosyaya 2000 satır → ~60k satır
 ```
 
-Üretilen yapı:
+Üretilen yapı: `mock-logs/console_{1,2,3}/serviceLogs/*.ndjson` + `console_{1,2,3}/*.ndjson` (other logs).
 
-```
-mock-logs/
-  console_1/
-    serviceLogs/  (auth-service.ndjson, payment-service.ndjson, ...)
-    gateway.ndjson, scheduler.ndjson, audit.ndjson, ...
-  console_2/  (aynı yapı)
-  console_3/  (aynı yapı)
+### Çalıştır
+
+```bash
+# terminal 1
+cd backend && npm run dev      # → Log server is ready: http://localhost:3000
+# terminal 2
+cd frontend && npm run dev     # → http://localhost:5173
 ```
 
-Örnek satır:
+---
+
+## 5. Log Formatı
+
+NDJSON. Her satır tek bir JSON objesi:
 
 ```json
 {
-  "timestamp": "28.06.2026 12:45.19405",
-  "level": "error",
+  "timestamp": "27.06.2026 11:35:29596",
+  "level": "info",
   "service": "auth-service",
   "eventType": "query",
-  "message": "Authentication failed for client client_737"
+  "message": "Health check passed"
 }
 ```
 
-### Phase 0 Checklist
+**Timestamp:** `DD.MM.YYYY HH:MM:SSmmm`
 
-- [ ] `node -v` 20+
-- [ ] `npm install @duckdb/node-api` sorunsuz kuruldu (binary indi)
-- [ ] Backend `npm run dev` → `[ { status: 'DuckDB bağlı ✅' } ]`
-- [ ] Frontend `npm run dev` → `localhost:5173` açılıyor
-- [ ] `generate-mock-logs.mjs` çalıştı, `mock-logs/` üretildi
+- `SS` = saniye (her zaman ilk 2 hane, < 60)
+- `mmm` = milisaniye, **sondaki sıfırlar kırpılmış** → kuyruk 1-5 hane arası değişken
+
+**Decode mantığı:** kuyruğu 5 haneye `rpad`'le, ilk 2 = saniye, son 3 = ms:
+
+| gelen   | rpad→5  | saniye | ms  |
+| ------- | ------- | ------ | --- |
+| `1`     | `10000` | 10     | 000 |
+| `12`    | `12000` | 12     | 000 |
+| `123`   | `12300` | 12     | 300 |
+| `1234`  | `12340` | 12     | 340 |
+| `12345` | `12345` | 12     | 345 |
+
+| Alan        | Değer                                   |
+| ----------- | --------------------------------------- |
+| `level`     | info / warning / error                  |
+| `service`   | microservis adı                         |
+| `eventType` | event / query / command / commandResult |
+| `message`   | serbest metin                           |
 
 ---
 
-## Phase 1 — Thin Vertical Slice 🔲
+## 6. DuckDB Şeması
 
-> **Amaç:** Klasör yolundan ingest et, /logs ile geri çek, frontend'de düz tablo göster. Uçtan uca hattı kanıtla.
-
-### 1.1 Backend — /ingest ve /logs
-
-`backend/src/index.ts`'i şununla değiştir:
-
-```ts
-import express from 'express';
-import cors from 'cors';
-import { DuckDBInstance } from '@duckdb/node-api';
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const instance = await DuckDBInstance.create('logs.db');
-const connection = await instance.connect();
-
-// POST /ingest — klasör yolundan DuckDB'ye oku
-app.post('/ingest', async (req, res) => {
-  try {
-    const folderPath = String(req.body.folderPath || '').replace(/\\/g, '/');
-    if (!folderPath) {
-      res.status(400).json({ error: 'folderPath gerekli' });
-      return;
-    }
-
-    const glob = `${folderPath}/**/*.ndjson`;
-    await connection.run(`
-      CREATE OR REPLACE TABLE logs AS
-      SELECT
-        CAST(timestamp AS VARCHAR) AS timestamp,
-        CAST(level     AS VARCHAR) AS level,
-        CAST(service   AS VARCHAR) AS service,
-        CAST(eventType AS VARCHAR) AS event_type,
-        CAST(message   AS VARCHAR) AS message,
-        filename                   AS source_path,
-        TRY_CAST(regexp_extract(filename, 'console[_-]?([0-9]+)', 1) AS INTEGER) AS console,
-        CASE WHEN filename LIKE '%serviceLogs%' THEN 1 ELSE 0 END AS is_service_log
-      FROM read_json_auto('${glob}', filename = true, format = 'newline_delimited',
-                          ignore_errors = true, union_by_name = true)
-    `);
-
-    const reader = await connection.runAndReadAll(
-      'SELECT count(*) AS c FROM logs',
-    );
-    res.json({ inserted: Number(reader.getRowObjects()[0].c) });
-  } catch (e) {
-    res.status(500).json({ error: (e as Error).message });
-  }
-});
-
-// GET /logs — ilk 100 satır
-app.get('/logs', async (_req, res) => {
-  try {
-    const reader = await connection.runAndReadAll(
-      'SELECT * FROM logs LIMIT 100',
-    );
-    res.json(reader.getRowObjects());
-  } catch (e) {
-    res.status(500).json({ error: (e as Error).message });
-  }
-});
-
-app.listen(3000, () => console.log('Backend çalışıyor: http://localhost:3000'));
+```sql
+CREATE TABLE IF NOT EXISTS logs (
+  timestamp      VARCHAR,    -- ham değer (DD.MM.YYYY HH:MM:SSmmm)
+  timestamp_iso  TIMESTAMP,  -- parse edilmiş, SIRALAMA bununla yapılır
+  level          VARCHAR,
+  service        VARCHAR,
+  event_type     VARCHAR,
+  message        VARCHAR,
+  source_path    VARCHAR,    -- dosyanın klasör yolu (relativePath)
+  console        INTEGER,    -- 1 / 2 / 3 (yoldan regex ile)
+  is_service_log INTEGER     -- 1 = serviceLogs altında, 0 = değil
+);
 ```
 
-### 1.2 Test (curl)
-
-```bash
-curl -X POST http://localhost:3000/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"folderPath": "/MUTLAK/YOL/mock-logs"}'
-# Beklenen: { "inserted": 60000 }
-
-curl http://localhost:3000/logs
-# 100 satır JSON dönmeli
-```
-
-### 1.3 Frontend — düz tablo
-
-`frontend/src/App.tsx`:
-
-```tsx
-import { useEffect, useState } from 'react';
-
-interface Log {
-  timestamp: string;
-  level: string;
-  service: string;
-  event_type: string;
-  message: string;
-  console: number;
-}
-
-const COLORS: Record<string, string> = {
-  info: '#4ade80',
-  warning: '#facc15',
-  error: '#f87171',
-};
-
-export default function App() {
-  const [logs, setLogs] = useState<Log[]>([]);
-  const [status, setStatus] = useState('Yükleniyor...');
-
-  useEffect(() => {
-    fetch('http://localhost:3000/logs')
-      .then((r) => r.json())
-      .then((d) => {
-        setLogs(d);
-        setStatus(`${d.length} satır`);
-      })
-      .catch(() => setStatus("Backend'e bağlanılamadı"));
-  }, []);
-
-  return (
-    <div style={{ padding: 24, fontFamily: 'monospace', fontSize: 13 }}>
-      <h2>Log Viewer — Phase 1 ({status})</h2>
-      <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-        <thead>
-          <tr
-            style={{ background: '#1e1e1e', color: '#fff', textAlign: 'left' }}
-          >
-            <th style={{ padding: 8 }}>Timestamp</th>
-            <th style={{ padding: 8 }}>Level</th>
-            <th style={{ padding: 8 }}>Service</th>
-            <th style={{ padding: 8 }}>Event</th>
-            <th style={{ padding: 8 }}>Message</th>
-          </tr>
-        </thead>
-        <tbody>
-          {logs.map((l, i) => (
-            <tr
-              key={i}
-              style={{ background: i % 2 ? '#1a1a1a' : '#111', color: '#ccc' }}
-            >
-              <td style={{ padding: 6 }}>{l.timestamp}</td>
-              <td
-                style={{ padding: 6, color: COLORS[l.level], fontWeight: 700 }}
-              >
-                {l.level}
-              </td>
-              <td style={{ padding: 6 }}>{l.service}</td>
-              <td style={{ padding: 6 }}>{l.event_type}</td>
-              <td style={{ padding: 6 }}>{l.message}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-```
-
-### Phase 1 Checklist
-
-- [ ] `/ingest` çağrısı `inserted` sayısı döndürüyor
-- [ ] `/logs` 100 satır döndürüyor
-- [ ] Frontend tabloda 100 satır görünüyor, level renkli
-- [ ] `console` ve `is_service_log` kolonları doğru dolmuş (örn. serviceLogs dosyaları için 1)
+**timestamp_iso parse'ı:** ham kuyruk `rpad(5)` ile `SS.mmm` formuna sokulup `strptime(..., '%d.%m.%Y %H:%M:%S.%f')` ile parse edilir. Sabit 3 haneli ms sayesinde sıralama, DuckDB'nin `%f` pad yönünden bağımsız olarak doğru.
 
 ---
 
-## Phase 2 — Gerçek Ölçek 🔲
+## 7. Backend Endpoint'leri
 
-> **Amaç:** 4.5 GB gerçek klasörü ingest et, kabul edilebilir sürede bitsin, sorgular hızlı olsun.
+| Method | Yol                  | İş                                                                                                                                                                                     |
+| ------ | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/upload`            | Uppy'den gelen dosyaları multer ile temp diske yazar, DuckDB `read_json_auto` ile `logs` tablosuna ekler, temp dosyayı siler. `relativePath`'ten `console` + `is_service_log` türetir. |
+| GET    | `/logs?page=&limit=` | `timestamp_iso DESC` sıralı, sayfalı satırlar (LIMIT/OFFSET).                                                                                                                          |
+| POST   | `/reset`             | `TRUNCATE TABLE logs` — veritabanını temizler.                                                                                                                                         |
 
-### Yapılacaklar
-
-- [ ] Gerçek 4.5 GB klasörü `/ingest` ile yükle, süreyi ölç (hedef: makul, ~30 sn bandında)
-- [ ] `console` regex'inin gerçek klasör adlarıyla eşleştiğini doğrula
-- [ ] `is_service_log`'un doğru ayrıştığını kontrol et (`SELECT is_service_log, count(*) FROM logs GROUP BY 1`)
-- [ ] Bozuk satır sayısını kontrol et (`ignore_errors` kaç satır atladı)
-- [ ] Basit sorgu hızını ölç: `SELECT count(*) FROM logs WHERE level='error'` anlık dönmeli
-- [ ] (Opsiyonel) ingest'i asenkron yap: `/ingest` hemen dönsün, durum `/ingest/status` ile sorulsun (HTTP timeout'a karşı)
-
-### Milestone
-
-> 4.5 GB diskte DuckDB'de, filtreli count sorguları anında dönüyor, tarayıcı hiç zorlanmıyor.
+**Akış:** Uppy klasör sürükle-bırak → her dosya ayrı istek (bundle:false, limit:1) → multer temp diske yazar + `relativePath` meta'sı `req.body`'ye gelir → DuckDB dosyayı diskten okur, metadata türetir, ekler → temp dosya silinir.
 
 ---
 
-## Phase 3 — Pagination + react-window 🔲
+## 8. Şu Ana Kadar Yapılanlar (✅)
 
-> **Amaç:** Sayfalı sorgu + sanal scroll ile "lag yok" garantisini kur.
-
-### Yapılacaklar
-
-- [ ] `/logs` endpoint'ine `page` ve `limit` query parametreleri (`LIMIT ? OFFSET ?`)
-- [ ] Frontend: scroll dibe yaklaşınca sonraki sayfayı iste (infinite scroll), gelen satırları listeye ekle
-- [ ] react-window `FixedSizeList` ile render — sadece görünen satırlar DOM'da
-- [ ] Yüz binlerce satırda scroll'u test et, takılma olmamalı
-
-### Milestone
-
-> Büyük veride akıcı, kesintisiz scroll. Backend sadece görünen sayfayı sorguluyor.
+- [x] Embedded DuckDB kurulumu, kalıcı `logs.db`, BigInt → JSON patch
+- [x] `POST /upload` — Uppy + multer + `read_json_auto`, temp dosya temizliği (try/finally)
+- [x] `GET /logs` — sayfalı sorgu, `timestamp_iso DESC`
+- [x] `POST /reset` — tablo temizleme
+- [x] Frontend: App.tsx (state + pagination + reset), FileUploader.tsx (Uppy Dashboard), LogTable.tsx (düz tablo, level renklendirme)
+- [x] **Bug fix — metadata:** `console` + `is_service_log` artık `relativePath`'ten türetiliyor (multer temp yolundan değil). Doğrulandı: console 1/2/3 dolu, is_service_log 0 ve 1 mevcut
+- [x] **Bug fix — timestamp sıralaması:** kuyruk `rpad(5)` + `SS.mmm` normalizasyonuyla parse, pad yönünden bağımsız doğru sıralama
+- [x] SQL string literal escape (`'` → `''`)
+- [x] **Ölçek testi geçti:** 4.5 GB / ~30M satır, 20-30 sn'de yüklenip akıcı görüntüleniyor
 
 ---
 
-## Phase 4 — Navigation 🔲
+## 9. TODO (sıradaki adımlar)
 
-> **Amaç:** Sketch'teki gezinme — bütün UI navigasyonu SQL `WHERE`'e dönüşür.
+### react-window (önce bu)
 
-### Yapılacaklar
+- [ ] LogTable'ı react-window'a çevir (`FixedSizeList`) — sadece görünen ~30 satır DOM'da
+- [ ] Sonsuz scroll mu / prev-next mi kalsın kararı (kullanıcı henüz seçmedi)
+- [ ] Milyonlarca satırda akıcı scroll testi
+- > Neden önce: navigation tıklamaları da uzun listeler render edecek; react-window önce oturursa navigation onun üstüne biner, yeniden taşıma olmaz
 
-- [ ] Timestamp'i gerçek tipe çevir: `strptime(timestamp, '%d.%m.%Y %H:%M.%f')` ile sıralanabilir kolon (5 haneli ms formatını test et, gerekirse normalize et)
+### Navigation (sketch'teki gezinme — hepsi SQL WHERE)
+
 - [ ] Üst tab'lar: console_1 / console_2 / console_3 → `WHERE console = ?`
-- [ ] Sol tree: serviceLogs + diğer loglar (sığ yapı; basitse kendi recursive component'in, library şart değil)
-- [ ] serviceLogs'a girince: `WHERE console=? AND is_service_log=1 ORDER BY ts` → tüm dosyalar tek sıralı görünüm (JS'te merge YOK)
-- [ ] Tek dosyaya tıklayınca: `WHERE source_path = ?`
+- [ ] Sol tree: serviceLogs + other logs (sığ yapı; basitse kendi component'in, library şart değil)
+- [ ] serviceLogs'a giriş: `WHERE console=? AND is_service_log=1 ORDER BY timestamp_iso` → tüm dosyalar tek sıralı merged görünüm (JS'te merge YOK)
+- [ ] Tek dosyaya tıklama: `WHERE source_path = ?`
 - [ ] Klasör tıklama mantığı: merge edilmemiş alt klasör varsa onları göster, sadece log varsa direkt listele
 
-### Milestone
-
-> Sketch'teki tüm gezinme çalışıyor; merged serviceLogs görünümü doğru zaman sırasında.
-
----
-
-## Phase 5 — Filtreler + Reset 🔲
-
-### Yapılacaklar
+### Filtreler + Reset
 
 - [ ] Filtre UI (üst sağ): level, timestamp aralığı, service, eventType
-- [ ] Her filtre `WHERE` clause'a eklenir (prepared statement / parametre ile, string birleştirme değil)
-- [ ] Aktif filtreler + seçili tab/dosya birlikte çalışır (hepsi tek sorguda birleşir)
+- [ ] Her filtre `WHERE`'e eklenir (parametre ile, string birleştirme değil)
+- [ ] Filtreler + seçili tab/dosya tek sorguda birleşir
 - [ ] Yüklenen klasör adını üst sağda göster
-- [ ] Reset butonu: tüm filtre/seçim state'ini sıfırla, ilk ekrana dön
+- [ ] Reset butonu: filtre/seçim state'ini sıfırla, ilk ekrana dön (`/reset` ile tabloyu da temizle)
 
-### Milestone
+### Polish
 
-> Tüm zorunlu filtreler + reset çalışıyor, filtreler birbiriyle ve navigation ile birleşiyor.
-
----
-
-## Phase 6 — Polish 🔲
-
-### Yapılacaklar
-
-- [ ] Ingest sırasında progress / loading göstergesi
-- [ ] Hata durumları: klasör bulunamadı, boş klasör, bozuk satırlar
+- [ ] Upload sırasında progress / loading göstergesi
+- [ ] Hata durumları: klasör bulunamadı, boş klasör, bozuk satır sayısı
+- [ ] Tek dosya yüklemede `source_path` null fallback'ini sağlamlaştır (gerekirse)
 - [ ] (Deferred) search bar — `WHERE message ILIKE '%...%'`
 - [ ] (Deferred) kolon başlığına tıklayınca sorting
-- [ ] CSS / tasarım cilası (burada AI yardımı serbest)
-- [ ] Reset sonrası `DROP TABLE logs` ile temiz başlangıç
+- [ ] CSS / tasarım cilası (AI yardımı serbest)
 
 ---
 
 ## Notlar
 
-- **logic senin:** Mentör kuralı gereği SQL sorguları ve uygulama mantığı senin yazacağın kısım; kurulum/boilerplate (npm, config, DuckDB init) serbest.
-- **Tek SQL ingestion** en büyük basitleştirme: manuel stream + batch döngüsü yok, DuckDB klasörü kendi okuyor.
-- **Tarayıcı asla GB tutmaz:** sadece o anki sayfa (100 satır) bellekte. Çökme bu yüzden imkânsız.
-- **Eski ClickHouse/Docker planı** terk edildi; bu rehber tek geçerli kaynak.
+- **Logic senin:** Mentör kuralı gereği SQL sorguları ve uygulama mantığı senin yazacağın kısım; kurulum/boilerplate serbest.
+- **Tarayıcı asla GB tutmaz:** sadece o anki sayfa bellekte → çökme imkânsız.
+- **Klasör sürükle-bırak şart:** Uppy'nin "browse folder" butonu Chrome'da `relativePath`'i null verir; metadata için klasör sürüklenmeli.
+- **Eski ClickHouse/Docker ve frontend-only planları** terk edildi; bu dosya tek geçerli kaynak.

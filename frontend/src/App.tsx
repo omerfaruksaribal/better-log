@@ -1,94 +1,131 @@
 import { useEffect, useState } from 'react';
+import FileUploader from './Components/FileUploader';
+import LogTable from './Components/LogTable';
 
-interface Log {
+interface LogItem {
   timestamp: string;
+  timestamp_iso: string;
   level: string;
   service: string;
   event_type: string;
   message: string;
+  source_path: string;
+  console: number | null;
+  is_service_log: number;
 }
 
-const LEVEL_COLORS: Record<string, string> = {
-  info: '#4ade80',
-  warning: '#facc15',
-  error: '#f87171',
-};
+function App() {
+  const [logs, setLogs] = useState<LogItem[]>([]);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
 
-export default function App() {
-  const [logs, setLogs] = useState<Log[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const fetchLogs = async (targetPage: number) => {
+    setLoading(true);
+    try {
+      const response = await fetch(
+        `http://localhost:3000/logs?page=${targetPage}&limit=100`,
+      );
+      const data = await response.json();
 
-  useEffect(() => {
-    fetch('http://localhost:3000/logs')
-      .then((res) => res.json())
-      .then((data) => {
+      // ! protection for the bigint trouble. there are 2 step to fix, first one is at the backend the second is here:
+      // if the value is not a array (i.e. error object) create an empty array for the state.
+      if (Array.isArray(data)) {
         setLogs(data);
-        setLoading(false);
-      })
-      .catch(() => {
-        setError("Backend'e bağlanılamadı");
-        setLoading(false);
+      } else {
+        console.error('the value is not form of array, the data is:', data);
+        setLogs([]);
+      }
+      setPage(targetPage);
+    } catch (error) {
+      console.error('an error occured: ', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onClickResetDatabase = async () => {
+    try {
+      await fetch('http://localhost:3000/reset', {
+        method: 'POST',
       });
+      setLogs([]);
+      setPage(1);
+    } catch (error) {
+      console.error('database could not resetted, error: ', error);
+    }
+  };
+
+  // after the f5 if there are any logs, fetch it.
+  useEffect(() => {
+    fetchLogs(1);
   }, []);
 
-  if (loading) return <p style={{ padding: 24 }}>Yükleniyor...</p>;
-  if (error) return <p style={{ padding: 24, color: 'red' }}>{error}</p>;
-
   return (
-    <div style={{ padding: 24, fontFamily: 'monospace' }}>
-      <h2 style={{ marginBottom: 16 }}>
-        Log Viewer — Phase 1 ({logs.length} satır)
-      </h2>
-      <table
-        style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}
+    <div
+      style={{
+        padding: '30px',
+        fontFamily: 'sans-serif',
+        maxWidth: '1200px',
+        margin: '0 auto',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'between',
+          alignItems: 'center',
+          marginBottom: '20px',
+        }}
       >
-        <thead>
-          <tr
-            style={{ background: '#1e1e1e', color: '#fff', textAlign: 'left' }}
-          >
-            <th style={th}>Timestamp</th>
-            <th style={th}>Level</th>
-            <th style={th}>Service</th>
-            <th style={th}>Event Type</th>
-            <th style={th}>Message</th>
-          </tr>
-        </thead>
-        <tbody>
-          {logs.map((log, i) => (
-            <tr
-              key={i}
-              style={{
-                background: i % 2 === 0 ? '#111' : '#1a1a1a',
-                color: '#ccc',
-              }}
-            >
-              <td style={td}>{log.timestamp}</td>
-              <td
-                style={{
-                  ...td,
-                  color: LEVEL_COLORS[log.level] ?? '#fff',
-                  fontWeight: 'bold',
-                }}
-              >
-                {log.level}
-              </td>
-              <td style={td}>{log.service}</td>
-              <td style={td}>{log.event_type}</td>
-              <td style={td}>{log.message}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+        <h2>LOGS</h2>
+        <button
+          onClick={onClickResetDatabase}
+          style={{
+            backgroundColor: '#ef4444',
+            color: 'white',
+            border: 'none',
+            padding: '10px 15px',
+            borderRadius: '5px',
+            cursor: 'pointer',
+            marginLeft: 'auto',
+          }}
+        >
+          Clear database
+        </button>
+      </div>
+
+      {/* file uploader, after the upload; fetch logs with first page */}
+      <FileUploader onUploadComplete={() => fetchLogs(1)} />
+
+      {/* Page controls */}
+      <div
+        style={{
+          marginTop: '20px',
+          display: 'flex',
+          gap: '10px',
+          alignItems: 'center',
+        }}
+      >
+        <button
+          disabled={page === 1 || loading}
+          onClick={() => fetchLogs(page - 1)}
+        >
+          Previous PAGE
+        </button>
+        <span>Page: {page}</span>
+        <button
+          disabled={logs.length < 100 || loading}
+          onClick={() => fetchLogs(page + 1)}
+        >
+          Next Page
+        </button>
+        {loading && <span style={{ color: '#666' }}>Loading...</span>}
+      </div>
+
+      {/* TODO: THAT TABLE WILL CHANGE WITH REACT-WINDOW. THIS IS ONLY FOR TESTCASE. */}
+      <LogTable logs={logs} />
     </div>
   );
 }
 
-const th: React.CSSProperties = {
-  padding: '8px 12px',
-  borderBottom: '1px solid #333',
-};
-const td: React.CSSProperties = {
-  padding: '6px 12px',
-  borderBottom: '1px solid #222',
-};
+export default App;

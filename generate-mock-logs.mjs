@@ -14,7 +14,7 @@
  *     console_3/
  *       ...aynı yapı...
  *
- * Timestamp formatı: DD.MM.YYYY HH:MM.mmmmm
+ * Timestamp formatı: DD.MM.YYYY HH:MM:mmmmm
  *   - mmmmm → 5 haneli milisaniye (00000-99999)
  *   - Gerçek formatla uyuşmuyorsa sadece formatTimestamp() fonksiyonunu düzenle.
  *
@@ -50,7 +50,7 @@ const OTHER_LOG_FILES = [
   'audit',
 ];
 
-const LEVELS = ['info', 'info', 'info', 'warning', 'error']; // info ağırlıklı
+const LEVELS = ['info', 'warning', 'error'];
 const EVENT_TYPES = ['event', 'query', 'command', 'commandResult'];
 
 const MESSAGES = {
@@ -124,8 +124,10 @@ function pad(n, width) {
 }
 
 /**
- * Timestamp üretir: DD.MM.YYYY HH:MM.mmmmm
- * Gerçek formatla uyuşmuyorsa sadece bu fonksiyonu düzenle.
+ * Kusursuz ve kurallı log timestamp üretir: DD.MM.YYYY HH:MM:sssss
+ * İlk 2 hane kesinlikle 00-59 arası SANİYE,
+ * Son 3 hane kesinlikle 000-999 arası MİLİSANİYE.
+ * Rastgele hane düşmeleri (123, 12, 1) simüle edilir.
  */
 function formatTimestamp(date) {
   const dd = pad(date.getDate(), 2);
@@ -133,8 +135,30 @@ function formatTimestamp(date) {
   const yyyy = date.getFullYear();
   const HH = pad(date.getHours(), 2);
   const MM = pad(date.getMinutes(), 2);
-  const ms5 = pad(date.getMilliseconds() * 100 + randInt(0, 99), 5); // 5 hane
-  return `${dd}.${mm}.${yyyy} ${HH}:${MM}.${ms5}`;
+
+  // 1. Saniye ve Milisaniyeyi kurallara göre BAĞIMSIZ üretiyoruz (Saniye asla 59'u geçemez)
+  const saniyeStr = pad(date.getSeconds(), 2); // '00' - '59' arası fix 2 hane
+  const msStr = pad(date.getMilliseconds(), 3); // '000' - '999' arası fix 3 hane
+
+  // 2. Bunları yan yana birleştirip kusursuz 5 haneli tabanımızı elde ediyoruz (Örn: '45123')
+  let birlesikMs = saniyeStr + msStr;
+
+  // 3. Senin istediğin kurnazlık: Sağdaki sıfırların kırpılma durumunu simüle ediyoruz.
+  // Örn: Saniye 12, MS 300 ise birleşik metin '12300' olur.
+  // Gerçek hayatta bu bize '123' veya '1230' olarak gelebileceği için sağdaki sıfırları dinamik buduyoruz.
+  if (birlesikMs.endsWith('00')) {
+    birlesikMs = birlesikMs.substring(0, birlesikMs.length - 2); // '12300' -> '123'
+  } else if (birlesikMs.endsWith('0')) {
+    birlesikMs = birlesikMs.substring(0, birlesikMs.length - 1); // '12340' -> '1234'
+  }
+
+  // Eğer saniye ve ms tamamen 00000 ise bazen tek '0' kalma esnekliği
+  if (parseInt(birlesikMs) === 0) {
+    birlesikMs = '0';
+  }
+
+  // Formatımız: DD.MM.YYYY HH:MM:sssss (Arada nokta yok, saniye asla 60'ı geçemez!)
+  return `${dd}.${mm}.${yyyy} ${HH}:${MM}:${birlesikMs}`;
 }
 
 function fillTemplate(template) {
