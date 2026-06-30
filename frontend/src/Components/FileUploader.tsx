@@ -14,9 +14,7 @@ const FileUploader = ({ onUploadComplete }: FileUploaderProps) => {
   const [uppy] = useState(() => {
     const uppyInstance = new Uppy({
       id: 'File-Uploader',
-      restrictions: {
-        allowedFileTypes: ['.json', '.ndjson'],
-      },
+      restrictions: { allowedFileTypes: ['.json', '.ndjson'] },
       autoProceed: false,
     });
 
@@ -24,11 +22,9 @@ const FileUploader = ({ onUploadComplete }: FileUploaderProps) => {
       endpoint: 'http://localhost:3000/upload',
       fieldName: 'files',
       bundle: false,
-      limit: 1, // to prevent network crash
-      timeout: 0, // 0 is infinite
-      headers: {
-        accept: 'application/json',
-      },
+      limit: 1,
+      timeout: 0,
+      headers: { accept: 'application/json' },
     });
 
     return uppyInstance;
@@ -36,20 +32,13 @@ const FileUploader = ({ onUploadComplete }: FileUploaderProps) => {
 
   useEffect(() => {
     const successHandler = (file: any, response: any) => {
-      console.log('File uploaded successfully: ', file?.name);
-      console.log('Server response: ', response);
+      console.log('Uploaded:', file?.name, response);
     };
-
     const errorHandler = (file: any, response: any) => {
-      console.log('File could not uploaded: ', file?.name);
-      console.log('Server response: ', response);
+      console.log('Upload error:', file?.name, response);
     };
-
     const completeHandler = (result: any) => {
-      console.log('Upload complete, files: ', result.successfull);
-      if (result.successful.length > 0) {
-        onUploadComplete(); // we are telling to the App.tsx (higher component) to refresh the page -> logtable
-      }
+      if (result.successful.length > 0) onUploadComplete();
     };
 
     uppy.on('upload-success', successHandler);
@@ -64,17 +53,16 @@ const FileUploader = ({ onUploadComplete }: FileUploaderProps) => {
   }, [uppy, onUploadComplete]);
 
   return (
-    <div style={{ marginBottom: '20px' }}>
-      <Dashboard
-        uppy={uppy}
-        height={300}
-        width="100%"
-        note="Accepted file types: .json, .ndjson"
-        proudlyDisplayPoweredByUppy={false}
-        showLinkToFileUploadResult={false}
-        showRemoveButtonAfterComplete={true}
-      />
-    </div>
+    <Dashboard
+      uppy={uppy}
+      theme="dark"
+      height={260}
+      width="100%"
+      note="Drag a log folder here · .json / .ndjson"
+      proudlyDisplayPoweredByUppy={false}
+      showLinkToFileUploadResult={false}
+      showRemoveButtonAfterComplete={true}
+    />
   );
 };
 

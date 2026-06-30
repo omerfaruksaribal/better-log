@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import FileUploader from './Components/FileUploader';
 import LogTable from './Components/LogTable';
 
+import './styles/logviewer.css';
+
 interface LogItem {
   timestamp: string;
   timestamp_iso: string;
@@ -26,18 +28,15 @@ function App() {
         `http://localhost:3000/logs?page=${targetPage}&limit=100`,
       );
       const data = await response.json();
-
-      // ! protection for the bigint trouble. there are 2 step to fix, first one is at the backend the second is here:
-      // if the value is not a array (i.e. error object) create an empty array for the state.
       if (Array.isArray(data)) {
         setLogs(data);
       } else {
-        console.error('the value is not form of array, the data is:', data);
+        console.error('Response is not an array:', data);
         setLogs([]);
       }
       setPage(targetPage);
     } catch (error) {
-      console.error('an error occured: ', error);
+      console.error('Fetch failed:', error);
     } finally {
       setLoading(false);
     }
@@ -45,86 +44,59 @@ function App() {
 
   const onClickResetDatabase = async () => {
     try {
-      await fetch('http://localhost:3000/reset', {
-        method: 'POST',
-      });
+      await fetch('http://localhost:3000/reset', { method: 'POST' });
       setLogs([]);
       setPage(1);
     } catch (error) {
-      console.error('database could not resetted, error: ', error);
+      console.error('Reset failed:', error);
     }
   };
 
-  // after the f5 if there are any logs, fetch it.
   useEffect(() => {
     fetchLogs(1);
   }, []);
 
   return (
-    <div
-      style={{
-        padding: '30px',
-        fontFamily: 'sans-serif',
-        maxWidth: '1200px',
-        margin: '0 auto',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'between',
-          alignItems: 'center',
-          marginBottom: '20px',
-        }}
-      >
-        <h2>LOGS</h2>
-        <button
-          onClick={onClickResetDatabase}
-          style={{
-            backgroundColor: '#ef4444',
-            color: 'white',
-            border: 'none',
-            padding: '10px 15px',
-            borderRadius: '5px',
-            cursor: 'pointer',
-            marginLeft: 'auto',
-          }}
-        >
-          Clear database
-        </button>
+    <>
+      <div className="lv-shell">
+        <header className="lv-header">
+          <div className="lv-brand">
+            <h1>Log Viewer</h1>
+            <span>console inspector</span>
+          </div>
+          <div className="lv-spacer" />
+          <button
+            className="lv-btn lv-btn-danger"
+            onClick={onClickResetDatabase}
+          >
+            Clear logs
+          </button>
+        </header>
+
+        <FileUploader onUploadComplete={() => fetchLogs(1)} />
+
+        <div className="lv-toolbar">
+          <button
+            className="lv-btn"
+            disabled={page === 1 || loading}
+            onClick={() => fetchLogs(page - 1)}
+          >
+            Previous
+          </button>
+          <span className="lv-page">Page {page}</span>
+          <button
+            className="lv-btn"
+            disabled={logs.length < 100 || loading}
+            onClick={() => fetchLogs(page + 1)}
+          >
+            Next
+          </button>
+          {loading && <span className="lv-loading">loading…</span>}
+        </div>
+
+        <LogTable logs={logs} />
       </div>
-
-      {/* file uploader, after the upload; fetch logs with first page */}
-      <FileUploader onUploadComplete={() => fetchLogs(1)} />
-
-      {/* Page controls */}
-      <div
-        style={{
-          marginTop: '20px',
-          display: 'flex',
-          gap: '10px',
-          alignItems: 'center',
-        }}
-      >
-        <button
-          disabled={page === 1 || loading}
-          onClick={() => fetchLogs(page - 1)}
-        >
-          Previous PAGE
-        </button>
-        <span>Page: {page}</span>
-        <button
-          disabled={logs.length < 100 || loading}
-          onClick={() => fetchLogs(page + 1)}
-        >
-          Next Page
-        </button>
-        {loading && <span style={{ color: '#666' }}>Loading...</span>}
-      </div>
-
-      {/* TODO: THAT TABLE WILL CHANGE WITH REACT-WINDOW. THIS IS ONLY FOR TESTCASE. */}
-      <LogTable logs={logs} />
-    </div>
+    </>
   );
 }
 

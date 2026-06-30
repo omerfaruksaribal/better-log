@@ -13,83 +13,61 @@ interface LogTableProps {
   logs: LogItem[];
 }
 
+const levelKey = (level: string) => {
+  const l = level.toLowerCase();
+  if (l === 'error' || l === 'warning' || l === 'info') return l;
+  return 'info';
+};
+
 const LogTable = ({ logs }: LogTableProps) => {
   if (logs.length === 0) {
     return (
-      <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
-        There are not logs, plase upload logs from above.
+      <div className="lv-empty">
+        No logs yet. Drag a log folder into the area above to get started.
       </div>
     );
   }
 
-  const getBackgroundColor = (level: string) => {
-    switch (level.toLowerCase()) {
-      case 'error':
-        return '#fef2f2';
-      case 'warning':
-        return '#fefcbf';
-      case 'info':
-        return '#eff6ff';
-      default:
-        return 'transparent';
-    }
-  };
-
   return (
-    <div style={{ marginTop: '20px', overflowX: 'auto' }}>
-      <table
-        style={{
-          width: '100%',
-          borderCollapse: 'collapse',
-          textAlign: 'left',
-          fontFamily: 'monospace',
-          fontSize: '13px',
-        }}
-      >
+    <div className="lv-tablewrap">
+      <table className="lv-table">
         <thead>
-          <tr
-            style={{
-              backgroundColor: '#f4f4f5',
-              borderBottom: '2px solid #e4e4e7',
-            }}
-          >
-            <th style={{ padding: '10px' }}>Timestamp</th>
-            <th style={{ padding: '10px' }}>Level</th>
-            <th style={{ padding: '10px' }}>Service</th>
-            <th style={{ padding: '10px' }}>Event Type</th>
-            <th style={{ padding: '10px' }}>Message</th>
-            <th style={{ padding: '10px' }}>Source File</th>
+          <tr>
+            <th>Timestamp</th>
+            <th>Level</th>
+            <th>Service</th>
+            <th>Event</th>
+            <th>Message</th>
+            <th>Source</th>
           </tr>
         </thead>
         <tbody>
-          {logs.map((log, index) => (
-            <tr
-              key={index}
-              style={{
-                borderBottom: '1px solid #e4e4e7',
-                backgroundColor: getBackgroundColor(log.level),
-              }}
-            >
-              <td style={{ padding: '10px', color: '#2563eb' }}>
-                {log.timestamp}
-              </td>
-              <td style={{ padding: '10px', fontWeight: 'bold' }}>
-                {log.level.toUpperCase()}
-              </td>
-              <td style={{ padding: '10px', color: '#0d9488' }}>
-                {log.service}
-              </td>
-              <td style={{ padding: '10px', color: '#4b5563' }}>
-                {log.event_type}
-              </td>
-              <td style={{ padding: '10px' }}>{log.message}</td>
-              <td
-                style={{ padding: '10px', color: '#71717a', fontSize: '11px' }}
-              >
-                {log.source_path}
-              </td>
-            </tr>
-          ))}
+          {logs.map((log, index) => {
+            const lvl = levelKey(log.level);
+            const [date, ...rest] = log.timestamp.split(' ');
+            const time = rest.join(' ');
+            return (
+              <tr key={index}>
+                <td className={`lv-td-stripe lv-stripe-${lvl}`}>
+                  <span className="lv-ts-date">{date} </span>
+                  <span className="lv-ts-time">{time}</span>
+                </td>
+                <td>
+                  <span className={`lv-badge lv-badge-${lvl}`}>
+                    {log.level}
+                  </span>
+                </td>
+                <td className="lv-service">{log.service}</td>
+                <td className="lv-event">{log.event_type}</td>
+                <td className="lv-msg" title={log.message}>
+                  {log.message}
+                </td>
+                <td className="lv-src" title={log.source_path}>
+                  {log.source_path}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
