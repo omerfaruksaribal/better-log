@@ -257,3 +257,79 @@ body {
   font-size: 14px;
   background: var(--lv-surface);
 }
+
+.lv-vrow:hover {
+  background: var(--lv-surface-2);
+}
+
+/* Virtualized table (react-window) */
+.lv-vheader {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--lv-surface-2);
+  border-bottom: 1px solid var(--lv-border);
+  font-family: var(--lv-sans);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--lv-muted);
+}
+.lv-vheader-cell {
+  padding: 11px 14px;
+}
+
+.lv-vlist {
+  width: 100%;
+  height: calc(65vh - 40px);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.lv-vrow {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid rgba(35, 44, 59, 0.55);
+  box-sizing: border-box;
+}
+.lv-vrow:hover {
+  background: var(--lv-surface-2);
+}
+
+.lv-vcell {
+  padding: 8px 14px;
+  box-sizing: border-box;
+}
+
+.lv-col-timestamp {
+  width: 180px;
+  flex-shrink: 0;
+}
+.lv-col-level {
+  width: 110px;
+  flex-shrink: 0;
+}
+.lv-col-service {
+  width: 150px;
+  flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lv-col-event {
+  width: 150px;
+  flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lv-col-message {
+  flex-grow: 1;
+  min-width: 300px;
+}
+.lv-col-source {
+  width: 220px;
+  flex-shrink: 0;
+}

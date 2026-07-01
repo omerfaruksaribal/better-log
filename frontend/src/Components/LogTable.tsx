@@ -44,6 +44,7 @@ const LogTable = ({ logs }: LogTableProps) => {
         <tbody>
           {logs.map((log, index) => {
             const lvl = levelKey(log.level);
+            // ! buranın direkt date, time olmamasının nedeni genel kullanım bu şekildeymiş. bu projede gereksiz ancak herhangi bir başka projede date time utc gibi 1den fazla boşluk olma duruunda patlamaması için ekstra bir güvenlik önlemiymiş.
             const [date, ...rest] = log.timestamp.split(' ');
             const time = rest.join(' ');
             return (

@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { DuckDBInstance } from '@duckdb/node-api';
 
-// BigInt -> JSON uyumu. count(*) BigInt döner, JSON.stringify onsuz patlar.
+// BigInt -> JSON count(*) returns BigInt, JSON.stringify will crash without it.
 (BigInt.prototype as any).toJSON = function () {
   return Number(this);
 };
@@ -20,9 +20,8 @@ app.use(express.json());
 const instance = await DuckDBInstance.create('logs.db');
 const connection = await instance.connect();
 
-// timestamp: ham değer ("DD.MM.YYYY HH:MM:SSmmm", SS=saniye, mmm=ms, sondaki sıfırlar kırpık)
-// timestamp_iso: sıralama için parse edilmiş gerçek TIMESTAMP
-// source_path / console / is_service_log: dosyanın klasör konumu (relativePath'ten türetilir)
+// timestamp_iso: original timestamp -> iso form
+// source_path / console / is_service_log: files location (comes from relativePath)
 await connection.run(`
   CREATE TABLE IF NOT EXISTS logs (
     timestamp VARCHAR,
@@ -37,7 +36,7 @@ await connection.run(`
   )
 `);
 
-// multer: gelen dosyaları geçici olarak diskteki /uploads klasörüne yazar.
+// multer: it writes files temporarly to the /uploads file
 const uploadDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
@@ -50,10 +49,32 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage, limits: { fileSize: Infinity } });
 
+// Windows'ta bir dosya hâlâ açık bir handle'a sahipse (AV taraması, native binary'nin
+// handle'ı geç bırakması gibi) unlink EBUSY/EPERM ile başarısız olabilir — macOS/Linux'ta
+// bu sorun yaşanmaz çünkü POSIX açık dosyaların silinmesine izin verir. Kısa gecikmeyle
+// birkaç kez tekrar deniyoruz; hâlâ olmuyorsa gerçek hata kodunu logluyoruz.
+async function safeUnlink(filePath: string, attempt = 1): Promise<void> {
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    console.error(
+      `Temp file deletion failed (attempt ${attempt}): ${filePath} — code: ${code}`,
+    );
+    if (attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, 300 * attempt));
+      return safeUnlink(filePath, attempt + 1);
+    }
+    console.error(`Giving up on deleting: ${filePath}`);
+  }
+}
+
 /**
  * ENDPOINT: POST /upload
- * Uppy XHRUpload dosyaları 'files' alanıyla, klasör yolunu da 'relativePath' meta alanıyla gönderir.
- * bundle:false + limit:1 olduğu için her istekte tek dosya gelir -> req.body.relativePath o dosyaya aittir.
+ * Uppy sends XHRUpload files with field of 'files', sendsr elativePath with meta field.
+ * bundle: false + limit:1 -> each request brings 1 file -> req.body.relativePath belongs to that file.
  */
 app.post('/upload', upload.array('files'), async (req, res) => {
   try {
@@ -69,7 +90,7 @@ app.post('/upload', upload.array('files'), async (req, res) => {
       const filePath = sqlEscape(file.path.replace(/\\/g, '/'));
 
       // relPath: METADATA için mantıksal yol. Klasör yapısı (console_x, serviceLogs) burada.
-      // multer'ın temp yolunda bu bilgi YOK; o yüzden Uppy'nin relativePath meta'sını kullanıyoruz.
+      //! multer'ın temp yolunda bu bilgi yok; o yüzden Uppy'nin relativePath meta'sını kullanıyoruz.
       const relPath = sqlEscape(
         String(req.body.relativePath || file.originalname).replace(/\\/g, '/'),
       );
@@ -101,8 +122,7 @@ app.post('/upload', upload.array('files'), async (req, res) => {
           )
         `);
       } finally {
-        // delete the temp file even if INSERT fails (uploads/ shouldn't get full)
-        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        await safeUnlink(filePath);
       }
     }
 
@@ -158,8 +178,3 @@ const PORT = 3000;
 app.listen(PORT, () => {
   console.log(`Log server is ready: http://localhost:${PORT}`);
 });
-
-const check = await connection.runAndReadAll(
-  'SELECT console, is_service_log, count(*) AS c FROM logs GROUP BY 1, 2 ORDER BY 1, 2',
-);
-console.log(check.getRowObjects());

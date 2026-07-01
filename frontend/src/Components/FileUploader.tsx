@@ -6,6 +6,7 @@ import XHRUpload from '@uppy/xhr-upload';
 import '@uppy/core/css/style.min.css';
 import '@uppy/dashboard/css/style.min.css';
 
+// TODO: interface classlarda kullanılırken burada neden kullandık? sırf typescript hata vermesin diye mi? use case olarak type mı interface mi daha avantajlı, hangisi kullanılıyor?
 interface FileUploaderProps {
   onUploadComplete: () => void;
 }
@@ -37,6 +38,7 @@ const FileUploader = ({ onUploadComplete }: FileUploaderProps) => {
     const errorHandler = (file: any, response: any) => {
       console.log('Upload error:', file?.name, response);
     };
+    // ! after the succesfull upload; file uploader tells that file uploaded successfully, you can continue to the app.tsx. after the function call, page refreshes and brand new :d logs comes to the page.
     const completeHandler = (result: any) => {
       if (result.successful.length > 0) onUploadComplete();
     };
